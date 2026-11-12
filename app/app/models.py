@@ -67,8 +67,12 @@ class ActiveSuspension(BaseModel):
     route: str
     suspend_start: datetime
     suspend_end: datetime
-    source_chain: list[str] = Field(..., description="形成该结论的公告链编号，根公告在前")
-    sources: list[str] = Field(..., description="链上各公告详情页链接")
+    source_chain: list[str] = Field(
+        ...,
+        description="形成该结论的引用路径：同一原公告及其查询时刻已发布的更正，"
+        "按发布时间依次替换停运信息（分叉分支并入同一序列），根公告在前",
+    )
+    sources: list[str] = Field(..., description="与 source_chain 一一对应的公告详情页链接")
     published_at: datetime = Field(..., description="链上最新生效公告的发布时间")
 
 
@@ -78,7 +82,9 @@ class InactiveChain(BaseModel):
     root_id: str
     route: str | None
     reason: str = Field(..., description="cancelled / not_yet_effective / expired / no_interval")
-    chain: list[str]
+    chain: list[str] = Field(
+        ..., description="同一原公告的公告组（含分叉分支），按发布时间排序"
+    )
     sources: list[str]
     latest_published_at: datetime | None = None
 

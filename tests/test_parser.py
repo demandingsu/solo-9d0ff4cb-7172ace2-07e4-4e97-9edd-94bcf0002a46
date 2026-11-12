@@ -27,13 +27,13 @@ def test_next_page_and_detail_links_index():
 
 
 def test_last_page_has_no_next():
-    html = (HTML_DIR / "page3.html").read_text(encoding="utf-8")
-    assert parse_next_page(html, "http://site:8080/page3.html") is None
+    html = (HTML_DIR / "page4.html").read_text(encoding="utf-8")
+    assert parse_next_page(html, "http://site:8080/page4.html") is None
 
 
 def test_offsite_link_absolute_and_detected():
-    html = (HTML_DIR / "page3.html").read_text(encoding="utf-8")
-    links = parse_detail_links(html, "http://site:8080/page3.html")
+    html = (HTML_DIR / "page4.html").read_text(encoding="utf-8")
+    links = parse_detail_links(html, "http://site:8080/page4.html")
     offsite = [u for u, _, _ in links if "external.example.org" in u]
     assert offsite == ["http://external.example.org/notice/N-EXT-001.html"]
     assert not is_same_site(offsite[0], "http://site:8080/index.html")
@@ -70,6 +70,21 @@ def test_parse_multi_reference_detail():
     html = (HTML_DIR / "notices" / "N-2026-011.html").read_text(encoding="utf-8")
     a = parse_detail(html, "http://site:8080/notices/N-2026-011.html")
     assert a.references == ["N-2026-009", "N-2026-999"]
+
+
+def test_parse_forked_correction_details():
+    # 016 分叉引用原公告 014；017 沿 015 分支继续修改
+    html = (HTML_DIR / "notices" / "N-2026-016.html").read_text(encoding="utf-8")
+    a = parse_detail(html, "http://site:8080/notices/N-2026-016.html")
+    assert a.kind.value == "correction"
+    assert a.route == "60 路区间"
+    assert a.references == ["N-2026-014"]
+
+    html = (HTML_DIR / "notices" / "N-2026-017.html").read_text(encoding="utf-8")
+    a = parse_detail(html, "http://site:8080/notices/N-2026-017.html")
+    assert a.kind.value == "correction"
+    assert a.route == "60 路"
+    assert a.references == ["N-2026-015"]
 
 
 def test_missing_id_raises():

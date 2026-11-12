@@ -115,6 +115,95 @@ def test_independent_notices_same_route_judged_separately():
     assert res.inactive[0].root_id == "A1"
 
 
+def test_forked_corrections_merge_into_single_result():
+    # 同一原公告先后被两条更正分别引用（分叉）：按发布时间依次替换，
+    # 查询时刻只返回最新一支的线路与区间，另一分支不残留
+    anns = [
+        make("A1", NoticeKind.SUSPENSION, f"2026-11-08T10:00:00{TZ}",
+             route="60 路",
+             start=f"2026-11-10T06:00:00{TZ}", end=f"2026-11-12T22:00:00{TZ}"),
+        make("A2", NoticeKind.CORRECTION, f"2026-11-09T10:00:00{TZ}",
+             route="60 路", refs=["A1"],
+             start=f"2026-11-10T06:00:00{TZ}", end=f"2026-11-13T22:00:00{TZ}"),
+        make("A3", NoticeKind.CORRECTION, f"2026-11-10T10:00:00{TZ}",
+             route="60 路区间", refs=["A1"],
+             start=f"2026-11-11T06:00:00{TZ}", end=f"2026-11-14T22:00:00{TZ}"),
+    ]
+    res = reconstruct(anns, Q)
+    assert len(res.active) == 1
+    a = res.active[0]
+    # 较晚发布的 A3 替换 A2：线路与区间以 A3 为准
+    assert a.route == "60 路区间"
+    assert a.suspend_end == parse_dt(f"2026-11-14T22:00:00{TZ}")
+    assert a.source_chain == ["A1", "A2", "A3"]
+    assert a.sources == [f"http://x/notices/{i}.html" for i in ("A1", "A2", "A3")]
+    assert a.published_at == parse_dt(f"2026-11-10T10:00:00{TZ}")
+
+
+def test_late_correction_on_old_branch_supersedes_other_branch():
+    # 较晚更正沿旧分支继续修改：另一分支（虽引用原公告）的结果仍被覆盖
+    anns = [
+        make("A1", NoticeKind.SUSPENSION, f"2026-11-08T10:00:00{TZ}",
+             route="60 路",
+             start=f"2026-11-10T06:00:00{TZ}", end=f"2026-11-12T22:00:00{TZ}"),
+        make("A2", NoticeKind.CORRECTION, f"2026-11-09T10:00:00{TZ}",
+             route="60 路", refs=["A1"],
+             start=f"2026-11-10T06:00:00{TZ}", end=f"2026-11-13T22:00:00{TZ}"),
+        make("A3", NoticeKind.CORRECTION, f"2026-11-10T10:00:00{TZ}",
+             route="60 路区间", refs=["A1"],
+             start=f"2026-11-11T06:00:00{TZ}", end=f"2026-11-14T22:00:00{TZ}"),
+        make("A4", NoticeKind.CORRECTION, f"2026-11-11T09:00:00{TZ}",
+             route="60 路", refs=["A2"],
+             start=f"2026-11-11T06:00:00{TZ}", end=f"2026-11-15T22:00:00{TZ}"),
+    ]
+    res = reconstruct(anns, Q)
+    assert len(res.active) == 1
+    a = res.active[0]
+    # 最新发布的 A4（引用旧分支 A2）决定最终结果，A3 分支不残留
+    assert a.route == "60 路"
+    assert a.suspend_start == parse_dt(f"2026-11-11T06:00:00{TZ}")
+    assert a.suspend_end == parse_dt(f"2026-11-15T22:00:00{TZ}")
+    assert a.source_chain == ["A1", "A2", "A3", "A4"]
+    assert a.published_at == parse_dt(f"2026-11-11T09:00:00{TZ}")
+
+
+def test_unpublished_fork_correction_not_effective_early():
+    # 分叉上的更正发布于查询时刻之后：不提前生效，仍按已发布分支判定
+    anns = [
+        make("A1", NoticeKind.SUSPENSION, f"2026-11-08T10:00:00{TZ}",
+             start=f"2026-11-10T06:00:00{TZ}", end=f"2026-11-12T22:00:00{TZ}"),
+        make("A2", NoticeKind.CORRECTION, f"2026-11-09T10:00:00{TZ}",
+             refs=["A1"],
+             start=f"2026-11-10T06:00:00{TZ}", end=f"2026-11-13T22:00:00{TZ}"),
+        make("A3", NoticeKind.CORRECTION, f"2026-11-12T10:00:00{TZ}",
+             refs=["A1"],
+             start=f"2026-11-11T06:00:00{TZ}", end=f"2026-11-14T22:00:00{TZ}"),
+    ]
+    res = reconstruct(anns, Q)
+    assert len(res.active) == 1
+    a = res.active[0]
+    assert a.source_chain == ["A1", "A2"]
+    assert a.suspend_end == parse_dt(f"2026-11-13T22:00:00{TZ}")
+
+
+def test_cancellation_on_one_branch_kills_whole_group():
+    # 撤销只引用其中一分支，也使同一原公告的整组失效
+    anns = [
+        make("A1", NoticeKind.SUSPENSION, f"2026-11-08T10:00:00{TZ}",
+             start=f"2026-11-10T06:00:00{TZ}", end=f"2026-11-20T22:00:00{TZ}"),
+        make("A2", NoticeKind.CORRECTION, f"2026-11-09T08:00:00{TZ}",
+             refs=["A1"],
+             start=f"2026-11-10T06:00:00{TZ}", end=f"2026-11-21T22:00:00{TZ}"),
+        make("A3", NoticeKind.CANCELLATION, f"2026-11-09T10:00:00{TZ}",
+             route=None, refs=["A1"]),
+    ]
+    res = reconstruct(anns, Q)
+    assert res.active == []
+    assert len(res.inactive) == 1
+    assert res.inactive[0].reason == "cancelled"
+    assert res.inactive[0].chain == ["A1", "A2", "A3"]
+
+
 def test_unmatched_reference_reported_but_chain_still_evaluated():
     anns = [
         make("A1", NoticeKind.SUSPENSION, f"2026-11-10T09:00:00{TZ}",
