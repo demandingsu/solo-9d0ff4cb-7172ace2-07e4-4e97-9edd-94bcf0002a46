@@ -1,0 +1,26 @@
+services:
+  notice-site:
+    build: ./site
+    container_name: bus-notice-site
+    ports:
+      - "8080:8080"
+    networks:
+      - busnet
+
+  api:
+    build: ./app
+    container_name: bus-notice-api
+    ports:
+      - "8000:8000"
+    environment:
+      # API 通过容器网络访问示例站点；同站判定以此主机名为基准
+      NOTICE_SITE_URL: http://notice-site:8080/index.html
+    depends_on:
+      notice-site:
+        condition: service_healthy
+    networks:
+      - busnet
+
+networks:
+  busnet:
+    driver: bridge
